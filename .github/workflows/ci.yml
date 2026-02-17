@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-build:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ./go.mod
+          cache: true
+
+      - name: Verify dependencies
+        run: |
+          make tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Run go vet
+        run: make vet
+
+      - name: Run tests with coverage
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Build
+        run: make build
+
+  golangci-lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - name: golangci-lint
+        uses: smartcontractkit/.github/actions/ci-lint-go@ci-lint-go/v4
+        with:
+          go-version-file: ./go.mod
+          golangci-lint-config: ./.golangci.yml
