@@ -76,8 +76,22 @@ func run() error {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	if *pkgFlag != "" && *msgFlag != "" {
+	// Validate flag combinations
+	hasPkg := *pkgFlag != ""
+	hasMsg := *msgFlag != ""
+	hasType := *typeFlag != "patch" // non-default type was specified
+
+	if hasPkg && hasMsg {
 		return runNonInteractive(cwd, *pkgFlag, *msgFlag, *typeFlag)
+	}
+
+	if hasPkg || hasMsg || hasType {
+		if !hasPkg {
+			return fmt.Errorf("missing required flag: -pkg is required for non-interactive mode")
+		}
+		if !hasMsg {
+			return fmt.Errorf("missing required flag: -m is required for non-interactive mode")
+		}
 	}
 
 	return runInteractive(cwd)
