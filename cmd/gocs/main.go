@@ -40,29 +40,36 @@ func main() {
 }
 
 func run() error {
-	pkgFlag := flag.String("pkg", "", "Package name(s) to include (comma-separated for multiple)")
-	msgFlag := flag.String("m", "", "Changelog message")
-	typeFlag := flag.String("type", "patch", "Version bump type: major, minor, or patch")
-	versionFlag := flag.Bool("version", false, "Print version and exit")
-	helpFlag := flag.Bool("help", false, "Show help")
+	fs := flag.NewFlagSet("gocs", flag.ContinueOnError)
 
-	flag.Usage = func() {
+	pkgFlag := fs.String("pkg", "", "Package name(s) to include (comma-separated for multiple)")
+	msgFlag := fs.String("m", "", "Changelog message")
+	typeFlag := fs.String("type", "patch", "Version bump type: major, minor, or patch")
+	versionFlag := fs.Bool("version", false, "Print version and exit")
+	helpFlag := fs.Bool("help", false, "Show help")
+
+	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "gocs - Generate changeset markdown files\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  gocs                                      # Interactive TUI mode\n")
 		fmt.Fprintf(os.Stderr, "  gocs -pkg <name> -m \"message\"           # Non-interactive mode\n")
 		fmt.Fprintf(os.Stderr, "  gocs -pkg <name> -type minor -m \"msg\"   # With version type\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
-		flag.PrintDefaults()
+		fs.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  gocs -pkg chainlink -m 'Fix memory leak #internal'\n")
 		fmt.Fprintf(os.Stderr, "  gocs -pkg chainlink,contracts -type minor -m 'Add new feature'\n")
 	}
 
-	flag.Parse()
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return err
+	}
 
 	if *helpFlag {
-		flag.Usage()
+		fs.Usage()
 		return nil
 	}
 
