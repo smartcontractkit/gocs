@@ -10,9 +10,14 @@
 //
 //	go install github.com/smartcontractkit/gocs/cmd/gocs@latest
 //
-// Or use directly with go tool:
+// Or add as a tool dependency (Go 1.24+):
 //
-//	go tool github.com/smartcontractkit/gocs/cmd/gocs@latest
+//	go get -tool github.com/smartcontractkit/gocs/cmd/gocs@latest
+//	go tool gocs
+//
+// Or run directly without installing:
+//
+//	go run github.com/smartcontractkit/gocs/cmd/gocs@latest
 //
 // The tool discovers package.json files in the current directory tree
 // and allows you to create changeset files in the .changeset directory.

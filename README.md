@@ -10,10 +10,17 @@ A Go tool for generating [changesets](https://github.com/changesets/changesets) 
 go install github.com/smartcontractkit/gocs/cmd/gocs@latest
 ```
 
-Or use directly with `go tool` (Go 1.24+):
+Or add as a tool dependency (Go 1.24+):
 
 ```bash
-go tool github.com/smartcontractkit/gocs/cmd/gocs@latest
+go get -tool github.com/smartcontractkit/gocs/cmd/gocs@latest
+go tool gocs
+```
+
+Or run directly without installing:
+
+```bash
+go run github.com/smartcontractkit/gocs/cmd/gocs@latest
 ```
 
 ## Usage
