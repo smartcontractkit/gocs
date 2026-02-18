@@ -96,9 +96,17 @@ func runNonInteractive(cwd, pkgNames, message, versionType string) error {
 		return fmt.Errorf("invalid version type %q: must be major, minor, or patch", versionType)
 	}
 
-	packages := strings.Split(pkgNames, ",")
-	for i := range packages {
-		packages[i] = strings.TrimSpace(packages[i])
+	parts := strings.Split(pkgNames, ",")
+	var packages []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			packages = append(packages, p)
+		}
+	}
+
+	if len(packages) == 0 {
+		return fmt.Errorf("no valid package names provided")
 	}
 
 	entries := make([]changeset.Entry, len(packages))
