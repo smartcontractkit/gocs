@@ -1,0 +1,32 @@
+name: Changesets
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: changesets-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  changesets:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      changesets_published: ${{ steps.changesets.outputs.published }}
+      changesets_publishedPackages: ${{ steps.changesets.outputs.publishedPackages }}
+    steps:
+      - name: changesets
+        id: changesets
+        uses: smartcontractkit/.github/actions/cicd-changesets@cicd-changesets/v1
+        with:
+          git-user: app-token-issuer-devex[bot]
+          git-email: app-token-issuer-devex[bot]@users.noreply.github.com
+          # Tags created like: <pkg>/v<version>
+          changesets-tag-separator: "/v"
+          pnpm-use-cache: false
+          aws-region: us-west-2
+          aws-role-arn: ${{ secrets.AWS_IAM_ROLE_CHANGESETS_ARN }}
+          aws-lambda-url: ${{ secrets.AWS_LAMBDA_URL_GATI_DEVEX }}
