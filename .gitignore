@@ -8,6 +8,9 @@
 *.swp
 *.swo
 
+# Node / pnpm (used for changesets only)
+node_modules/
+
 # OS
 .DS_Store
 Thumbs.db
