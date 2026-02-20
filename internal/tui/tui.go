@@ -574,20 +574,10 @@ func RunWithChanged(packages []discovery.Package, changedPkgs map[string]bool) (
 		return nil, errors.New("no packages found")
 	}
 
-	var model Model
-	if len(changedPkgs) > 0 {
-		model = NewModelWithChanged(packages, changedPkgs)
-	} else {
-		model = NewModel(packages)
-		// For non-grouped display, populate displayItems for consistency
-		for i, pkg := range packages {
-			model.displayItems = append(model.displayItems, packageItem{
-				pkg:       pkg,
-				origIndex: i,
-				changed:   false,
-			})
-		}
+	if changedPkgs == nil {
+		changedPkgs = make(map[string]bool)
 	}
+	model := NewModelWithChanged(packages, changedPkgs)
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
