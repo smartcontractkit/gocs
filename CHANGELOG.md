@@ -1,5 +1,11 @@
 # gocs
 
+## 0.2.0
+
+### Minor Changes
+
+- [#8](https://github.com/smartcontractkit/gocs/pull/8) [`09aee97`](https://github.com/smartcontractkit/gocs/commit/09aee97aece15c8ed98808da326da6358e8b48cf) Thanks [@chainchad](https://github.com/chainchad)! - Show current version and fix bug when no unchanged packages
+
 ## 0.1.0
 
 ### Minor Changes
