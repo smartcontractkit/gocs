@@ -5,7 +5,7 @@
     "ci:changeset:publish": "pnpm changeset publish",
     "ci:changeset:version": "pnpm changeset version"
   },
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "",
   "repository": {
     "type": "git",
