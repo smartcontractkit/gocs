@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/smartcontractkit/gocs/internal/changeset"
 	"github.com/smartcontractkit/gocs/internal/discovery"
 )
 
@@ -273,6 +275,50 @@ func TestCursorToLineNumberNoDisplayItems(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("cursorToLineNumber() with cursor=%d: got %d, want %d", tt.cursor, got, tt.expected)
 		}
+	}
+}
+
+func TestVersionSelectionShowsCurrentVersion(t *testing.T) {
+	packages := []discovery.Package{
+		{Name: "chainlink", Path: "packages/chainlink", Version: "2.1.0"},
+		{Name: "contracts", Path: "packages/contracts", Version: "0.5.3"},
+		{Name: "noversion", Path: "packages/noversion"},
+	}
+
+	m := NewModel(packages)
+	m.selectedPackages = packages
+	m.versionTypes = make([]changeset.VersionType, len(packages))
+	m.state = StateSelectVersion
+	m.currentPkgIndex = 0
+	m.versionCursor = 2
+
+	// First package has a version - should show it
+	view := m.View()
+	if !strings.Contains(view, "chainlink") {
+		t.Error("expected view to contain package name 'chainlink'")
+	}
+	if !strings.Contains(view, "current: 2.1.0") {
+		t.Error("expected view to contain 'current: 2.1.0'")
+	}
+
+	// Second package also has a version
+	m.currentPkgIndex = 1
+	view = m.View()
+	if !strings.Contains(view, "contracts") {
+		t.Error("expected view to contain package name 'contracts'")
+	}
+	if !strings.Contains(view, "current: 0.5.3") {
+		t.Error("expected view to contain 'current: 0.5.3'")
+	}
+
+	// Third package has no version - should not show version info
+	m.currentPkgIndex = 2
+	view = m.View()
+	if !strings.Contains(view, "noversion") {
+		t.Error("expected view to contain package name 'noversion'")
+	}
+	if strings.Contains(view, "current:") {
+		t.Error("expected view to NOT contain 'current:' for package without version")
 	}
 }
 
