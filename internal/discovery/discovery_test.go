@@ -165,6 +165,49 @@ func TestFindPackagesSkipsNoName(t *testing.T) {
 	}
 }
 
+func TestFindPackagesVersion(t *testing.T) {
+	root := t.TempDir()
+
+	// Create pnpm-workspace.yaml
+	if err := os.WriteFile(filepath.Join(root, "pnpm-workspace.yaml"), []byte("packages:\n  - packages/*"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	pkgDir := filepath.Join(root, "packages", "mypackage")
+	if err := os.MkdirAll(pkgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name": "mypackage", "version": "2.1.0"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Package without version field
+	pkgDir2 := filepath.Join(root, "packages", "noversion")
+	if err := os.MkdirAll(pkgDir2, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir2, "package.json"), []byte(`{"name": "noversion"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	packages, err := FindPackages(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(packages) != 2 {
+		t.Fatalf("expected 2 packages, got %d", len(packages))
+	}
+
+	// Packages are sorted by name
+	if packages[0].Name != "mypackage" || packages[0].Version != "2.1.0" {
+		t.Errorf("expected mypackage with version 2.1.0, got %q with version %q", packages[0].Name, packages[0].Version)
+	}
+	if packages[1].Name != "noversion" || packages[1].Version != "" {
+		t.Errorf("expected noversion with empty version, got %q with version %q", packages[1].Name, packages[1].Version)
+	}
+}
+
 func TestFindPackagesRootPackage(t *testing.T) {
 	root := t.TempDir()
 

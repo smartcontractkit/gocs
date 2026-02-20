@@ -17,6 +17,7 @@ import (
 type Package struct {
 	Name    string
 	Path    string // relative path to the package directory
+	Version string // version from package.json (e.g. "1.2.3")
 	Private bool   // whether the package is marked as private
 }
 
@@ -174,6 +175,7 @@ func parsePackageJSON(path string) (Package, error) {
 
 	var pkgJSON struct {
 		Name    string `json:"name"`
+		Version string `json:"version"`
 		Private bool   `json:"private"`
 	}
 
@@ -186,5 +188,5 @@ func parsePackageJSON(path string) (Package, error) {
 		return Package{}, os.ErrNotExist
 	}
 
-	return Package{Name: pkgJSON.Name, Private: pkgJSON.Private}, nil
+	return Package{Name: pkgJSON.Name, Version: pkgJSON.Version, Private: pkgJSON.Private}, nil
 }

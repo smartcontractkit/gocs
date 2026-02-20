@@ -496,7 +496,11 @@ func (m Model) viewVersionSelection() string {
 	var sb strings.Builder
 
 	pkg := m.selectedPackages[m.currentPkgIndex]
-	sb.WriteString(titleStyle.Render("Select version bump for " + pkg.Name))
+	title := "Select version bump for " + pkg.Name
+	if pkg.Version != "" {
+		title += dimStyle.Render(" (current: " + pkg.Version + ")")
+	}
+	sb.WriteString(titleStyle.Render(title))
 	sb.WriteString("\n\n")
 
 	versionOptions := []struct {
