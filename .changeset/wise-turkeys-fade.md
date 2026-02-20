@@ -1,5 +1,0 @@
----
-"gocs": minor
----
-
-Initial release
