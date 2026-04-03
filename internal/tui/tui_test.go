@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/smartcontractkit/gocs/internal/changeset"
 	"github.com/smartcontractkit/gocs/internal/discovery"
 )
@@ -81,6 +83,21 @@ func TestNewModelWithChanged(t *testing.T) {
 	if m.displayItems[2].origIndex != 0 { // pkg-a is at index 0 in original
 		t.Errorf("expected origIndex=0 for pkg-a, got %d", m.displayItems[2].origIndex)
 	}
+
+	// Verify rows include section headers
+	// Layout: [changed header, pkg-b, pkg-d, unchanged header, pkg-a, pkg-c]
+	if len(m.rows) != 6 {
+		t.Fatalf("expected 6 rows, got %d", len(m.rows))
+	}
+	if !m.rows[0].isHeader || m.rows[0].headerIdx != 0 {
+		t.Error("expected row 0 to be changed header")
+	}
+	if m.rows[1].isHeader || m.rows[1].item.pkg.Name != "pkg-b" {
+		t.Error("expected row 1 to be pkg-b")
+	}
+	if !m.rows[3].isHeader || m.rows[3].headerIdx != 1 {
+		t.Error("expected row 3 to be unchanged header")
+	}
 }
 
 func TestNewModelWithChangedByPath(t *testing.T) {
@@ -123,6 +140,10 @@ func TestNewModelWithChangedAllChanged(t *testing.T) {
 	if m.unchangedCount != 0 {
 		t.Errorf("expected unchangedCount=0, got %d", m.unchangedCount)
 	}
+	// Only changed header + 2 packages (no unchanged header)
+	if len(m.rows) != 3 {
+		t.Errorf("expected 3 rows, got %d", len(m.rows))
+	}
 }
 
 func TestNewModelWithChangedNoneChanged(t *testing.T) {
@@ -141,6 +162,10 @@ func TestNewModelWithChangedNoneChanged(t *testing.T) {
 	if m.unchangedCount != 2 {
 		t.Errorf("expected unchangedCount=2, got %d", m.unchangedCount)
 	}
+	// Only unchanged header + 2 packages
+	if len(m.rows) != 3 {
+		t.Errorf("expected 3 rows, got %d", len(m.rows))
+	}
 }
 
 func TestCursorToLineNumber(t *testing.T) {
@@ -158,89 +183,24 @@ func TestCursorToLineNumber(t *testing.T) {
 
 	m := NewModelWithChanged(packages, changedPkgs)
 
-	// Layout is:
-	// Line 0: "changed packages" header
-	// Line 1: pkg-a (cursor 0)
-	// Line 2: pkg-b (cursor 1)
-	// Line 3: "unchanged packages" header
-	// Line 4: pkg-c (cursor 2)
-	// Line 5: pkg-d (cursor 3)
+	// With rows-based approach, cursor maps directly to line number:
+	// Row 0: "changed packages" header (cursor 0)
+	// Row 1: pkg-a (cursor 1)
+	// Row 2: pkg-b (cursor 2)
+	// Row 3: "unchanged packages" header (cursor 3)
+	// Row 4: pkg-c (cursor 4)
+	// Row 5: pkg-d (cursor 5)
 
 	tests := []struct {
 		cursor   int
 		expected int
 	}{
-		{cursor: 0, expected: 1}, // pkg-a: cursor 0 + 1 header
-		{cursor: 1, expected: 2}, // pkg-b: cursor 1 + 1 header
-		{cursor: 2, expected: 4}, // pkg-c: cursor 2 + 2 headers
-		{cursor: 3, expected: 5}, // pkg-d: cursor 3 + 2 headers
-	}
-
-	for _, tt := range tests {
-		m.cursor = tt.cursor
-		got := m.cursorToLineNumber()
-		if got != tt.expected {
-			t.Errorf("cursorToLineNumber() with cursor=%d: got %d, want %d", tt.cursor, got, tt.expected)
-		}
-	}
-}
-
-func TestCursorToLineNumberOnlyChanged(t *testing.T) {
-	packages := []discovery.Package{
-		{Name: "pkg-a", Path: "packages/a"},
-		{Name: "pkg-b", Path: "packages/b"},
-	}
-
-	changedPkgs := map[string]bool{
-		"pkg-a": true,
-		"pkg-b": true,
-	}
-
-	m := NewModelWithChanged(packages, changedPkgs)
-
-	// Layout is:
-	// Line 0: "changed packages" header
-	// Line 1: pkg-a (cursor 0)
-	// Line 2: pkg-b (cursor 1)
-
-	tests := []struct {
-		cursor   int
-		expected int
-	}{
-		{cursor: 0, expected: 1}, // pkg-a: cursor 0 + 1 header
-		{cursor: 1, expected: 2}, // pkg-b: cursor 1 + 1 header
-	}
-
-	for _, tt := range tests {
-		m.cursor = tt.cursor
-		got := m.cursorToLineNumber()
-		if got != tt.expected {
-			t.Errorf("cursorToLineNumber() with cursor=%d: got %d, want %d", tt.cursor, got, tt.expected)
-		}
-	}
-}
-
-func TestCursorToLineNumberOnlyUnchanged(t *testing.T) {
-	packages := []discovery.Package{
-		{Name: "pkg-a", Path: "packages/a"},
-		{Name: "pkg-b", Path: "packages/b"},
-	}
-
-	changedPkgs := map[string]bool{}
-
-	m := NewModelWithChanged(packages, changedPkgs)
-
-	// Layout is:
-	// Line 0: "unchanged packages" header
-	// Line 1: pkg-a (cursor 0)
-	// Line 2: pkg-b (cursor 1)
-
-	tests := []struct {
-		cursor   int
-		expected int
-	}{
-		{cursor: 0, expected: 1}, // pkg-a: cursor 0 + 1 header (unchanged header)
-		{cursor: 1, expected: 2}, // pkg-b: cursor 1 + 1 header
+		{cursor: 0, expected: 0},
+		{cursor: 1, expected: 1},
+		{cursor: 2, expected: 2},
+		{cursor: 3, expected: 3},
+		{cursor: 4, expected: 4},
+		{cursor: 5, expected: 5},
 	}
 
 	for _, tt := range tests {
@@ -278,7 +238,83 @@ func TestCursorToLineNumberNoDisplayItems(t *testing.T) {
 	}
 }
 
-func TestVersionSelectionShowsCurrentVersion(t *testing.T) {
+func TestSectionToggle(t *testing.T) {
+	packages := []discovery.Package{
+		{Name: "pkg-a", Path: "packages/a"},
+		{Name: "pkg-b", Path: "packages/b"},
+		{Name: "pkg-c", Path: "packages/c"},
+	}
+
+	changedPkgs := map[string]bool{
+		"pkg-a": true,
+		"pkg-b": true,
+	}
+
+	m := NewModelWithChanged(packages, changedPkgs)
+
+	// Toggle changed section (headerIdx 0) - should select all changed
+	m.toggleSection(0)
+	if !m.selected[m.displayItems[0].origIndex] {
+		t.Error("expected pkg-a to be selected after toggle")
+	}
+	if !m.selected[m.displayItems[1].origIndex] {
+		t.Error("expected pkg-b to be selected after toggle")
+	}
+
+	// Verify sectionAllSelected returns true
+	if !m.sectionAllSelected(0) {
+		t.Error("expected sectionAllSelected(0) to be true")
+	}
+
+	// Toggle again - should deselect all changed
+	m.toggleSection(0)
+	if m.selected[m.displayItems[0].origIndex] {
+		t.Error("expected pkg-a to be deselected after second toggle")
+	}
+	if m.selected[m.displayItems[1].origIndex] {
+		t.Error("expected pkg-b to be deselected after second toggle")
+	}
+
+	// Toggle unchanged section (headerIdx 1) - should select pkg-c
+	m.toggleSection(1)
+	if !m.selected[m.displayItems[2].origIndex] {
+		t.Error("expected pkg-c to be selected after unchanged toggle")
+	}
+	// Changed should still be deselected
+	if m.selected[m.displayItems[0].origIndex] {
+		t.Error("changed pkg-a should still be deselected")
+	}
+}
+
+func TestSectionTogglePartialSelection(t *testing.T) {
+	packages := []discovery.Package{
+		{Name: "pkg-a", Path: "packages/a"},
+		{Name: "pkg-b", Path: "packages/b"},
+		{Name: "pkg-c", Path: "packages/c"},
+	}
+
+	changedPkgs := map[string]bool{
+		"pkg-a": true,
+		"pkg-b": true,
+	}
+
+	m := NewModelWithChanged(packages, changedPkgs)
+
+	// Select only pkg-a (partial selection of changed section)
+	m.selected[m.displayItems[0].origIndex] = true
+
+	if m.sectionAllSelected(0) {
+		t.Error("sectionAllSelected(0) should be false with partial selection")
+	}
+
+	// Toggle changed section - since not all selected, should select all
+	m.toggleSection(0)
+	if !m.selected[m.displayItems[0].origIndex] || !m.selected[m.displayItems[1].origIndex] {
+		t.Error("expected all changed packages to be selected")
+	}
+}
+
+func TestVersionSelectionPnpmStyle(t *testing.T) {
 	packages := []discovery.Package{
 		{Name: "chainlink", Path: "packages/chainlink", Version: "2.1.0"},
 		{Name: "contracts", Path: "packages/contracts", Version: "0.5.3"},
@@ -287,38 +323,124 @@ func TestVersionSelectionShowsCurrentVersion(t *testing.T) {
 
 	m := NewModel(packages)
 	m.selectedPackages = packages
-	m.versionTypes = make([]changeset.VersionType, len(packages))
+	m.versionTypes = make(map[int]changeset.VersionType)
+	m.versionStep = changeset.Major
+	m.versionSelected = make(map[int]bool)
+	m.versionRows = m.buildVersionRows()
 	m.state = StateSelectVersion
-	m.currentPkgIndex = 0
-	m.versionCursor = 2
 
-	// First package has a version - should show it
+	// View should show "major bump" title
 	view := m.View()
-	if !strings.Contains(view, "chainlink") {
-		t.Error("expected view to contain package name 'chainlink'")
-	}
-	if !strings.Contains(view, "current: 2.1.0") {
-		t.Error("expected view to contain 'current: 2.1.0'")
+	if !strings.Contains(view, "major") {
+		t.Error("expected view to contain 'major'")
 	}
 
-	// Second package also has a version
-	m.currentPkgIndex = 1
-	view = m.View()
-	if !strings.Contains(view, "contracts") {
-		t.Error("expected view to contain package name 'contracts'")
-	}
-	if !strings.Contains(view, "current: 0.5.3") {
-		t.Error("expected view to contain 'current: 0.5.3'")
+	// Should show "all packages" header
+	if !strings.Contains(view, "all packages") {
+		t.Error("expected view to contain 'all packages'")
 	}
 
-	// Third package has no version - should not show version info
-	m.currentPkgIndex = 2
-	view = m.View()
+	// Should show package names with versions
+	if !strings.Contains(view, "chainlink@2.1.0") {
+		t.Error("expected view to contain 'chainlink@2.1.0'")
+	}
+	if !strings.Contains(view, "contracts@0.5.3") {
+		t.Error("expected view to contain 'contracts@0.5.3'")
+	}
 	if !strings.Contains(view, "noversion") {
-		t.Error("expected view to contain package name 'noversion'")
+		t.Error("expected view to contain 'noversion'")
 	}
-	if strings.Contains(view, "current:") {
-		t.Error("expected view to NOT contain 'current:' for package without version")
+}
+
+func TestVersionAllToggle(t *testing.T) {
+	packages := []discovery.Package{
+		{Name: "pkg-a", Path: "packages/a"},
+		{Name: "pkg-b", Path: "packages/b"},
+		{Name: "pkg-c", Path: "packages/c"},
+	}
+
+	m := NewModel(packages)
+	m.selectedPackages = packages
+	m.versionTypes = make(map[int]changeset.VersionType)
+	m.versionStep = changeset.Major
+	m.versionSelected = make(map[int]bool)
+	m.versionRows = m.buildVersionRows()
+
+	// Toggle all
+	m.toggleAllVersionPackages()
+	if !m.versionAllSelected() {
+		t.Error("expected all version packages to be selected")
+	}
+
+	for i := range packages {
+		if !m.versionSelected[i] {
+			t.Errorf("expected package %d to be selected", i)
+		}
+	}
+
+	// Toggle again - should deselect all
+	m.toggleAllVersionPackages()
+	if m.versionAllSelected() {
+		t.Error("expected no version packages to be selected")
+	}
+}
+
+func TestAssignRemainingAsPatch(t *testing.T) {
+	packages := []discovery.Package{
+		{Name: "pkg-a", Path: "packages/a"},
+		{Name: "pkg-b", Path: "packages/b"},
+		{Name: "pkg-c", Path: "packages/c"},
+	}
+
+	m := NewModel(packages)
+	m.selectedPackages = packages
+	m.versionTypes = make(map[int]changeset.VersionType)
+
+	// Assign pkg-a as major manually
+	m.versionTypes[0] = changeset.Major
+
+	// Assign remaining as patch
+	m.assignRemainingAsPatch()
+
+	if m.versionTypes[0] != changeset.Major {
+		t.Error("expected pkg-a to remain major")
+	}
+	if m.versionTypes[1] != changeset.Patch {
+		t.Error("expected pkg-b to be patch")
+	}
+	if m.versionTypes[2] != changeset.Patch {
+		t.Error("expected pkg-c to be patch")
+	}
+}
+
+func TestBuildVersionRowsSkipsAssigned(t *testing.T) {
+	packages := []discovery.Package{
+		{Name: "pkg-a", Path: "packages/a"},
+		{Name: "pkg-b", Path: "packages/b"},
+		{Name: "pkg-c", Path: "packages/c"},
+	}
+
+	m := NewModel(packages)
+	m.selectedPackages = packages
+	m.versionTypes = make(map[int]changeset.VersionType)
+
+	// Assign pkg-a as major
+	m.versionTypes[0] = changeset.Major
+
+	rows := m.buildVersionRows()
+
+	// Should have: header + pkg-b + pkg-c (pkg-a already assigned)
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(rows))
+	}
+	if !rows[0].isHeader {
+		t.Error("expected first row to be header")
+	}
+	if rows[1].pkgIndex != 1 {
+		t.Errorf("expected second row to be pkg-b (index 1), got %d", rows[1].pkgIndex)
+	}
+	if rows[2].pkgIndex != 2 {
+		t.Errorf("expected third row to be pkg-c (index 2), got %d", rows[2].pkgIndex)
 	}
 }
 
@@ -330,7 +452,7 @@ func TestSelectionWithGroupedDisplay(t *testing.T) {
 	}
 
 	changedPkgs := map[string]bool{
-		"pkg-b": true, // pkg-b is at original index 1, but will be at display index 0
+		"pkg-b": true, // pkg-b is at original index 1
 	}
 
 	m := NewModelWithChanged(packages, changedPkgs)
@@ -343,9 +465,11 @@ func TestSelectionWithGroupedDisplay(t *testing.T) {
 		t.Fatalf("expected origIndex=1 for pkg-b, got %d", m.displayItems[0].origIndex)
 	}
 
-	// Simulate selecting the first item (pkg-b at display index 0)
-	m.cursor = 0
-	origIdx := m.displayItems[m.cursor].origIndex
+	// Rows layout: [changed header, pkg-b, unchanged header, pkg-a, pkg-c]
+	// Cursor 1 = pkg-b row
+	m.cursor = 1
+	row := m.rows[m.cursor]
+	origIdx := row.item.origIndex
 	m.selected[origIdx] = true
 
 	// Verify selection is stored by original index
@@ -369,5 +493,62 @@ func TestSelectionWithGroupedDisplay(t *testing.T) {
 	}
 	if selectedPackages[0].Name != "pkg-b" {
 		t.Errorf("expected pkg-b to be selected, got %s", selectedPackages[0].Name)
+	}
+}
+
+func TestFixedVersionTypeSkipsVersionSelection(t *testing.T) {
+	packages := []discovery.Package{
+		{Name: "pkg-a", Path: "packages/a"},
+		{Name: "pkg-b", Path: "packages/b"},
+		{Name: "pkg-c", Path: "packages/c"},
+	}
+
+	m := NewModelWithChanged(packages, map[string]bool{"pkg-a": true, "pkg-b": true})
+	vt := changeset.Minor
+	m.fixedVersionType = &vt
+
+	// Select all packages via the changed section header (cursor starts at row 0)
+	// Row 0 = changed header, toggling selects pkg-a and pkg-b
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	m = updated.(Model)
+
+	// Move to unchanged header and toggle it too
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	m = updated.(Model)
+
+	// Verify all 3 packages are selected
+	for i := range packages {
+		if !m.selected[i] {
+			t.Errorf("expected package %d to be selected", i)
+		}
+	}
+
+	// Press enter to confirm package selection
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	// Should skip StateSelectVersion and go directly to StateEnterSummary
+	if m.state != StateEnterSummary {
+		t.Fatalf("expected state StateEnterSummary, got %d", m.state)
+	}
+
+	// All 3 selected packages should have minor version type
+	if len(m.selectedPackages) != 3 {
+		t.Fatalf("expected 3 selectedPackages, got %d", len(m.selectedPackages))
+	}
+	for i, pkg := range m.selectedPackages {
+		got, ok := m.versionTypes[i]
+		if !ok {
+			t.Errorf("expected versionType for package %s to be set", pkg.Name)
+		}
+		if got != changeset.Minor {
+			t.Errorf("expected versionType for %s to be minor, got %s", pkg.Name, got)
+		}
 	}
 }

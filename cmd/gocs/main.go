@@ -3,6 +3,7 @@
 // Usage:
 //
 //	gocs                                          # Interactive TUI mode
+//	gocs -type minor                               # Interactive, skip version selection
 //	gocs -pkg <name> -m "changelog message"       # Non-interactive mode
 //	gocs -pkg <name> -type minor -m "message"     # Specify version type
 //
@@ -66,6 +67,7 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "gocs - Generate changeset markdown files\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  gocs                                      # Interactive TUI mode\n")
+		fmt.Fprintf(os.Stderr, "  gocs -type minor                            # Interactive, skip version selection\n")
 		fmt.Fprintf(os.Stderr, "  gocs -pkg <name> -m \"message\"           # Non-interactive mode\n")
 		fmt.Fprintf(os.Stderr, "  gocs -pkg <name> -type minor -m \"msg\"   # With version type\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
@@ -97,16 +99,23 @@ func run() error {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
+	// Detect if -type was explicitly provided (including -type patch)
+	typeExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "type" {
+			typeExplicit = true
+		}
+	})
+
 	// Validate flag combinations
 	hasPkg := *pkgFlag != ""
 	hasMsg := *msgFlag != ""
-	hasType := *typeFlag != "patch" // non-default type was specified
 
 	if hasPkg && hasMsg {
 		return runNonInteractive(cwd, *pkgFlag, *msgFlag, *typeFlag)
 	}
 
-	if hasPkg || hasMsg || hasType {
+	if hasPkg || hasMsg {
 		if !hasPkg {
 			return fmt.Errorf("missing required flag: -pkg is required for non-interactive mode")
 		}
@@ -115,7 +124,13 @@ func run() error {
 		}
 	}
 
-	return runInteractive(cwd)
+	// Pass -type to interactive mode if explicitly specified (skips version selection)
+	var fixedType string
+	if typeExplicit {
+		fixedType = *typeFlag
+	}
+
+	return runInteractive(cwd, fixedType)
 }
 
 func runNonInteractive(cwd, pkgNames, message, versionType string) error {
@@ -166,7 +181,7 @@ func runNonInteractive(cwd, pkgNames, message, versionType string) error {
 	return nil
 }
 
-func runInteractive(cwd string) error {
+func runInteractive(cwd string, fixedType string) error {
 	packages, err := discovery.FindPackages(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to discover packages: %w", err)
@@ -179,7 +194,24 @@ func runInteractive(cwd string) error {
 	// Detect modified packages to show them first (grouped)
 	modifiedPkgs, _ := git.GetModifiedPackages(cwd, packages)
 
-	cs, err := tui.RunWithChanged(packages, modifiedPkgs)
+	// If -type was specified, pass it through to skip version selection
+	var fixedVersionType *changeset.VersionType
+	if fixedType != "" {
+		var vt changeset.VersionType
+		switch strings.ToLower(fixedType) {
+		case "major":
+			vt = changeset.Major
+		case "minor":
+			vt = changeset.Minor
+		case "patch":
+			vt = changeset.Patch
+		default:
+			return fmt.Errorf("invalid version type %q: must be major, minor, or patch", fixedType)
+		}
+		fixedVersionType = &vt
+	}
+
+	cs, err := tui.RunWithChanged(packages, modifiedPkgs, fixedVersionType)
 	if err != nil {
 		return err
 	}

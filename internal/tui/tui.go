@@ -47,6 +47,13 @@ const (
 	StateDone
 )
 
+// displayRow represents a row in the package list: either a section header or a package item.
+type displayRow struct {
+	isHeader  bool
+	headerIdx int // 0 = changed header, 1 = unchanged header
+	item      packageItem
+}
+
 // packageItem represents a package in the display list with its metadata
 type packageItem struct {
 	pkg       discovery.Package
@@ -66,6 +73,9 @@ type Model struct {
 	changedCount   int
 	unchangedCount int
 
+	// Flattened rows for cursor navigation (includes section headers)
+	rows []displayRow
+
 	// Package selection
 	cursor   int
 	selected map[int]bool // keyed by origIndex
@@ -74,11 +84,17 @@ type Model struct {
 	windowHeight int
 	scrollOffset int
 
-	// Version selection for each selected package
+	// Version selection (pnpm-style: major step, then minor step, rest = patch)
 	selectedPackages []discovery.Package
 	versionCursor    int
-	currentPkgIndex  int
-	versionTypes     []changeset.VersionType
+	versionSelected  map[int]bool                  // keyed by index in selectedPackages for current version step
+	versionStep      changeset.VersionType         // current step: Major then Minor
+	versionTypes     map[int]changeset.VersionType // keyed by index in selectedPackages
+	// versionRows for the version selection list (all packages header + individual)
+	versionRows []versionDisplayRow
+
+	// Fixed version type: when set, skip version selection entirely
+	fixedVersionType *changeset.VersionType
 
 	// Summary input
 	textInput textinput.Model
@@ -86,6 +102,12 @@ type Model struct {
 
 	// Result
 	result *changeset.Changeset
+}
+
+// versionDisplayRow represents a row in the version selection list
+type versionDisplayRow struct {
+	isHeader bool // "all packages" header
+	pkgIndex int  // index into selectedPackages (-1 for header)
 }
 
 // NewModel creates a new TUI model with the given packages.
@@ -130,7 +152,31 @@ func NewModelWithChanged(packages []discovery.Package, changedPkgs map[string]bo
 	m.unchangedCount = len(unchanged)
 	m.displayItems = append(changed, unchanged...)
 
+	// Build flattened rows with section headers as selectable items
+	m.rows = buildDisplayRows(m.displayItems, m.changedCount, m.unchangedCount)
+
 	return m
+}
+
+// buildDisplayRows creates the flattened row list including section headers.
+func buildDisplayRows(items []packageItem, changedCount, unchangedCount int) []displayRow {
+	var rows []displayRow
+
+	if changedCount > 0 {
+		rows = append(rows, displayRow{isHeader: true, headerIdx: 0})
+		for i := 0; i < changedCount; i++ {
+			rows = append(rows, displayRow{item: items[i]})
+		}
+	}
+
+	if unchangedCount > 0 {
+		rows = append(rows, displayRow{isHeader: true, headerIdx: 1})
+		for i := changedCount; i < len(items); i++ {
+			rows = append(rows, displayRow{item: items[i]})
+		}
+	}
+
+	return rows
 }
 
 // Init initializes the model.
@@ -159,10 +205,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updatePackageSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Determine the list length based on whether we have grouped display
-	listLen := len(m.packages)
-	if len(m.displayItems) > 0 {
-		listLen = len(m.displayItems)
+	listLen := len(m.rows)
+	if listLen == 0 {
+		// Fallback for simple mode (no grouped display)
+		listLen = len(m.packages)
 	}
 
 	switch msg := msg.(type) {
@@ -184,17 +230,21 @@ func (m Model) updatePackageSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case " ":
-			// Toggle selection
-			if len(m.displayItems) > 0 {
-				// Using grouped display
-				origIdx := m.displayItems[m.cursor].origIndex
-				m.selected[origIdx] = !m.selected[origIdx]
+			if len(m.rows) > 0 {
+				row := m.rows[m.cursor]
+				if row.isHeader {
+					// Toggle all packages in this section
+					m.toggleSection(row.headerIdx)
+				} else {
+					origIdx := row.item.origIndex
+					m.selected[origIdx] = !m.selected[origIdx]
+				}
 			} else {
 				m.selected[m.cursor] = !m.selected[m.cursor]
 			}
 
 		case "enter":
-			// Collect selected packages and move to version selection
+			// Collect selected packages
 			for i, pkg := range m.packages {
 				if m.selected[i] {
 					m.selectedPackages = append(m.selectedPackages, pkg)
@@ -202,72 +252,115 @@ func (m Model) updatePackageSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if len(m.selectedPackages) == 0 {
-				// No packages selected, don't proceed
 				return m, nil
 			}
 
-			m.versionTypes = make([]changeset.VersionType, len(m.selectedPackages))
+			// If a fixed version type was provided, skip version selection
+			if m.fixedVersionType != nil {
+				m.versionTypes = make(map[int]changeset.VersionType, len(m.selectedPackages))
+				for i := range m.selectedPackages {
+					m.versionTypes[i] = *m.fixedVersionType
+				}
+				m.state = StateEnterSummary
+				m.textInput.Focus()
+				return m, textinput.Blink
+			}
+
+			// Start pnpm-style version selection: major first
+			m.versionTypes = make(map[int]changeset.VersionType, len(m.selectedPackages))
+			m.versionStep = changeset.Major
+			m.versionSelected = make(map[int]bool)
+			m.versionRows = m.buildVersionRows()
+			m.versionCursor = 0
+			m.scrollOffset = 0
 			m.state = StateSelectVersion
-			m.currentPkgIndex = 0
-			m.versionCursor = 2 // Default to patch
 		}
 	}
 	return m, nil
 }
 
-// ensureCursorVisible adjusts scroll offset to keep cursor in view
-func (m *Model) ensureCursorVisible() {
-	// Calculate visible area (leave room for header and footer)
-	visibleLines := max(
-		// title, blank, help, blank lines
-		m.windowHeight-6, 5)
-
-	// Calculate the actual line number in the rendered output
-	// that corresponds to the current cursor position
-	lineNum := m.cursorToLineNumber()
-
-	// When at the first item of a section, scroll up to show the header too
-	targetScrollOffset := lineNum
-	if m.cursor == 0 {
-		// First item - show the section header
-		targetScrollOffset = 0
-	} else if m.cursor == m.changedCount && m.changedCount > 0 && m.unchangedCount > 0 {
-		// First item of unchanged section - show that section header
-		// lineNum includes both headers, so subtract 1 to show "unchanged packages" header
-		targetScrollOffset = lineNum - 1
+// toggleSection toggles all packages in a section (changed=0, unchanged=1).
+func (m *Model) toggleSection(headerIdx int) {
+	// Determine which display items belong to this section
+	var start, end int
+	if headerIdx == 0 {
+		// Changed section
+		start, end = 0, m.changedCount
+	} else {
+		// Unchanged section
+		start, end = m.changedCount, m.changedCount+m.unchangedCount
 	}
 
-	if targetScrollOffset < m.scrollOffset {
-		m.scrollOffset = targetScrollOffset
+	// Check if all in this section are currently selected
+	allSelected := true
+	for i := start; i < end; i++ {
+		if !m.selected[m.displayItems[i].origIndex] {
+			allSelected = false
+			break
+		}
+	}
+
+	// Toggle: if all selected, deselect all; otherwise select all
+	for i := start; i < end; i++ {
+		m.selected[m.displayItems[i].origIndex] = !allSelected
+	}
+}
+
+// sectionAllSelected returns true if all packages in a section are selected.
+func (m Model) sectionAllSelected(headerIdx int) bool {
+	var start, end int
+	if headerIdx == 0 {
+		start, end = 0, m.changedCount
+	} else {
+		start, end = m.changedCount, m.changedCount+m.unchangedCount
+	}
+	if start == end {
+		return false
+	}
+	for i := start; i < end; i++ {
+		if !m.selected[m.displayItems[i].origIndex] {
+			return false
+		}
+	}
+	return true
+}
+
+// ensureCursorVisible adjusts scroll offset to keep cursor in view
+func (m *Model) ensureCursorVisible() {
+	visibleLines := max(m.windowHeight-6, 5)
+
+	lineNum := m.cursor // rows already include headers, so cursor == line number
+
+	if lineNum < m.scrollOffset {
+		m.scrollOffset = lineNum
 	} else if lineNum >= m.scrollOffset+visibleLines {
 		m.scrollOffset = lineNum - visibleLines + 1
 	}
 }
 
-// cursorToLineNumber converts cursor position to line number in rendered output
+// cursorToLineNumber converts cursor position to line number in rendered output.
+// With the new rows-based approach, cursor position maps directly to line number.
 func (m Model) cursorToLineNumber() int {
-	if len(m.displayItems) == 0 {
-		return m.cursor
+	return m.cursor
+}
+
+// buildVersionRows builds the display rows for the version selection step.
+func (m Model) buildVersionRows() []versionDisplayRow {
+	var rows []versionDisplayRow
+	// "all packages" / "all remaining packages" header
+	rows = append(rows, versionDisplayRow{isHeader: true, pkgIndex: -1})
+	for i := range m.selectedPackages {
+		// Only show packages not yet assigned a version type
+		if _, assigned := m.versionTypes[i]; !assigned {
+			rows = append(rows, versionDisplayRow{pkgIndex: i})
+		}
 	}
-
-	// Account for section headers
-	lineNum := m.cursor
-
-	// If we have changed packages, add 1 for the "changed packages" header
-	if m.changedCount > 0 {
-		lineNum++
-	}
-
-	// If cursor is in unchanged section and we have unchanged packages,
-	// add 1 for the "unchanged packages" header
-	if m.unchangedCount > 0 && m.cursor >= m.changedCount {
-		lineNum++
-	}
-
-	return lineNum
+	return rows
 }
 
 func (m Model) updateVersionSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
+	listLen := len(m.versionRows)
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -277,35 +370,114 @@ func (m Model) updateVersionSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.versionCursor > 0 {
 				m.versionCursor--
+				m.ensureVersionCursorVisible()
 			}
 
 		case "down", "j":
-			if m.versionCursor < 2 {
+			if m.versionCursor < listLen-1 {
 				m.versionCursor++
+				m.ensureVersionCursorVisible()
+			}
+
+		case " ":
+			row := m.versionRows[m.versionCursor]
+			if row.isHeader {
+				// Toggle all displayed packages
+				m.toggleAllVersionPackages()
+			} else {
+				m.versionSelected[row.pkgIndex] = !m.versionSelected[row.pkgIndex]
 			}
 
 		case "enter":
-			// Set version type for current package
-			switch m.versionCursor {
-			case 0:
-				m.versionTypes[m.currentPkgIndex] = changeset.Major
-			case 1:
-				m.versionTypes[m.currentPkgIndex] = changeset.Minor
-			case 2:
-				m.versionTypes[m.currentPkgIndex] = changeset.Patch
+			// Assign current version step to all selected packages
+			for idx, sel := range m.versionSelected {
+				if sel {
+					m.versionTypes[idx] = m.versionStep
+				}
 			}
 
-			// Move to next package or summary input
-			m.currentPkgIndex++
-			if m.currentPkgIndex >= len(m.selectedPackages) {
+			if m.versionStep == changeset.Major {
+				// Move to minor step
+				m.versionStep = changeset.Minor
+				m.versionSelected = make(map[int]bool)
+				m.versionRows = m.buildVersionRows()
+				m.versionCursor = 0
+				m.scrollOffset = 0
+
+				// If all packages already assigned, skip to summary
+				if len(m.versionRows) <= 1 {
+					// Only header row left, assign remaining as patch
+					m.assignRemainingAsPatch()
+					m.state = StateEnterSummary
+					m.textInput.Focus()
+					return m, textinput.Blink
+				}
+			} else {
+				// After minor step, assign remaining packages as patch
+				m.assignRemainingAsPatch()
 				m.state = StateEnterSummary
 				m.textInput.Focus()
 				return m, textinput.Blink
 			}
-			m.versionCursor = 2 // Reset to patch default
 		}
 	}
 	return m, nil
+}
+
+// ensureVersionCursorVisible adjusts scroll offset for the version selection list
+func (m *Model) ensureVersionCursorVisible() {
+	visibleLines := max(m.windowHeight-6, 5)
+	if m.versionCursor < m.scrollOffset {
+		m.scrollOffset = m.versionCursor
+	} else if m.versionCursor >= m.scrollOffset+visibleLines {
+		m.scrollOffset = m.versionCursor - visibleLines + 1
+	}
+}
+
+// toggleAllVersionPackages toggles all packages in the version selection list.
+func (m *Model) toggleAllVersionPackages() {
+	// Check if all are selected
+	allSelected := true
+	for _, row := range m.versionRows {
+		if row.isHeader {
+			continue
+		}
+		if !m.versionSelected[row.pkgIndex] {
+			allSelected = false
+			break
+		}
+	}
+
+	for _, row := range m.versionRows {
+		if row.isHeader {
+			continue
+		}
+		m.versionSelected[row.pkgIndex] = !allSelected
+	}
+}
+
+// versionAllSelected returns true if all packages in the version list are selected.
+func (m Model) versionAllSelected() bool {
+	count := 0
+	for _, row := range m.versionRows {
+		if row.isHeader {
+			continue
+		}
+		count++
+		if !m.versionSelected[row.pkgIndex] {
+			return false
+		}
+	}
+	return count > 0
+}
+
+// assignRemainingAsPatch assigns patch version to any selected packages not yet assigned.
+func (m *Model) assignRemainingAsPatch() {
+	for i := range m.selectedPackages {
+		if _, assigned := m.versionTypes[i]; !assigned {
+			m.versionTypes[i] = changeset.Patch
+		}
+	}
 }
 
 func (m Model) updateSummaryInput(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -368,21 +540,15 @@ func (m Model) viewPackageSelection() string {
 	// Calculate visible area
 	visibleLines := max(m.windowHeight-6, 5)
 
-	// Build all lines first
+	// Build all lines
 	var lines []string
 
-	if len(m.displayItems) > 0 {
-		// Grouped display mode
-		if m.changedCount > 0 {
-			lines = append(lines, sectionStyle.Render("changed packages"))
-			for i := 0; i < m.changedCount; i++ {
-				lines = append(lines, m.renderPackageItem(i))
-			}
-		}
-		if m.unchangedCount > 0 {
-			lines = append(lines, sectionStyle.Render("unchanged packages"))
-			for i := m.changedCount; i < len(m.displayItems); i++ {
-				lines = append(lines, m.renderPackageItem(i))
+	if len(m.rows) > 0 {
+		for i, row := range m.rows {
+			if row.isHeader {
+				lines = append(lines, m.renderSectionHeader(i, row.headerIdx))
+			} else {
+				lines = append(lines, m.renderPackageRow(i, row))
 			}
 		}
 	} else {
@@ -424,13 +590,46 @@ func (m Model) viewPackageSelection() string {
 	return sb.String()
 }
 
-// renderPackageItem renders a package item for grouped display
-func (m Model) renderPackageItem(displayIdx int) string {
-	item := m.displayItems[displayIdx]
-	isCursor := m.cursor == displayIdx
+// renderSectionHeader renders a section header as a selectable row.
+func (m Model) renderSectionHeader(cursorIdx, headerIdx int) string {
+	isCursor := m.cursor == cursorIdx
+	allSel := m.sectionAllSelected(headerIdx)
+
+	var cursor string
+	if isCursor {
+		cursor = "> "
+	} else {
+		cursor = "  "
+	}
+
+	var checked string
+	if allSel {
+		checked = checkStyle.Render("[x]")
+	} else {
+		checked = "[ ]"
+	}
+
+	var label string
+	if headerIdx == 0 {
+		label = "changed packages"
+	} else {
+		label = "unchanged packages"
+	}
+
+	name := sectionStyle.Render(label)
+	if isCursor {
+		name = selectedStyle.Render(label)
+	}
+
+	return fmt.Sprintf("%s%s %s", cursor, checked, name)
+}
+
+// renderPackageRow renders a package item in the rows-based display.
+func (m Model) renderPackageRow(cursorIdx int, row displayRow) string {
+	item := row.item
+	isCursor := m.cursor == cursorIdx
 	isSelected := m.selected[item.origIndex]
 
-	// Use consistent ASCII-only prefix
 	var cursor string
 	if isCursor {
 		cursor = "> "
@@ -464,7 +663,6 @@ func (m Model) renderPackageItemSimple(idx int) string {
 	isCursor := m.cursor == idx
 	isSelected := m.selected[idx]
 
-	// Use consistent ASCII-only prefix
 	var cursor string
 	if isCursor {
 		cursor = "> "
@@ -495,44 +693,119 @@ func (m Model) renderPackageItemSimple(idx int) string {
 func (m Model) viewVersionSelection() string {
 	var sb strings.Builder
 
-	pkg := m.selectedPackages[m.currentPkgIndex]
-	title := "Select version bump for " + pkg.Name
-	if pkg.Version != "" {
-		title += dimStyle.Render(" (current: " + pkg.Version + ")")
-	}
+	title := fmt.Sprintf("Which packages should have a %s bump?", string(m.versionStep))
 	sb.WriteString(titleStyle.Render(title))
 	sb.WriteString("\n\n")
 
-	versionOptions := []struct {
-		name string
-		desc string
-	}{
-		{"major", "Breaking changes"},
-		{"minor", "New features (backwards compatible)"},
-		{"patch", "Bug fixes"},
+	// Calculate visible area
+	visibleLines := max(m.windowHeight-6, 5)
+
+	var lines []string
+	for i, row := range m.versionRows {
+		if row.isHeader {
+			lines = append(lines, m.renderVersionHeader(i))
+		} else {
+			lines = append(lines, m.renderVersionPackage(i, row))
+		}
 	}
 
-	for i, opt := range versionOptions {
-		var cursor string
-		if m.versionCursor == i {
-			cursor = "> "
-		} else {
-			cursor = "  "
-		}
+	// Apply scrolling
+	startIdx := max(m.scrollOffset, 0)
+	endIdx := min(startIdx+visibleLines, len(lines))
+	if startIdx > len(lines) {
+		startIdx = len(lines)
+	}
 
-		name := opt.name
-		if m.versionCursor == i {
-			name = selectedStyle.Render(name)
-		}
+	if startIdx > 0 {
+		sb.WriteString(dimStyle.Render(fmt.Sprintf("^ %d more above", startIdx)))
+		sb.WriteString("\n")
+	}
 
-		desc := dimStyle.Render(" - " + opt.desc)
-		fmt.Fprintf(&sb, "%s%s%s\n", cursor, name, desc)
+	for i := startIdx; i < endIdx; i++ {
+		sb.WriteString(lines[i])
+		sb.WriteString("\n")
+	}
+
+	remaining := len(lines) - endIdx
+	if remaining > 0 {
+		sb.WriteString(dimStyle.Render(fmt.Sprintf("v %d more below", remaining)))
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("\n")
-	sb.WriteString(helpStyle.Render("up/down navigate | enter confirm | q quit"))
+
+	if m.versionStep == changeset.Major {
+		sb.WriteString(helpStyle.Render("up/down navigate | space select | enter confirm (unselected will be asked for minor) | q quit"))
+	} else {
+		sb.WriteString(helpStyle.Render("up/down navigate | space select | enter confirm (unselected will be patch) | q quit"))
+	}
 
 	return sb.String()
+}
+
+// renderVersionHeader renders the "all packages" toggle header for version selection.
+func (m Model) renderVersionHeader(cursorIdx int) string {
+	isCursor := m.versionCursor == cursorIdx
+	allSel := m.versionAllSelected()
+
+	var cursor string
+	if isCursor {
+		cursor = "> "
+	} else {
+		cursor = "  "
+	}
+
+	var checked string
+	if allSel {
+		checked = checkStyle.Render("[x]")
+	} else {
+		checked = "[ ]"
+	}
+
+	label := "all packages"
+	// On minor step some packages may already be assigned major,
+	// so the toggle only applies to remaining packages.
+	if m.versionStep != changeset.Major {
+		label = "all remaining packages"
+	}
+	if isCursor {
+		label = selectedStyle.Render(label)
+	} else {
+		label = sectionStyle.Render(label)
+	}
+
+	return fmt.Sprintf("%s%s %s", cursor, checked, label)
+}
+
+// renderVersionPackage renders a package row in the version selection list.
+func (m Model) renderVersionPackage(cursorIdx int, row versionDisplayRow) string {
+	pkg := m.selectedPackages[row.pkgIndex]
+	isCursor := m.versionCursor == cursorIdx
+	isSelected := m.versionSelected[row.pkgIndex]
+
+	var cursor string
+	if isCursor {
+		cursor = "> "
+	} else {
+		cursor = "  "
+	}
+
+	var checked string
+	if isSelected {
+		checked = checkStyle.Render("[x]")
+	} else {
+		checked = "[ ]"
+	}
+
+	name := pkg.Name
+	if pkg.Version != "" {
+		name += "@" + pkg.Version
+	}
+	if isCursor {
+		name = selectedStyle.Render(name)
+	}
+
+	return fmt.Sprintf("%s%s %s", cursor, checked, name)
 }
 
 func (m Model) viewSummaryInput() string {
@@ -541,19 +814,53 @@ func (m Model) viewSummaryInput() string {
 	sb.WriteString(titleStyle.Render("Enter changelog message"))
 	sb.WriteString("\n\n")
 
-	// Show selected packages and versions
-	var pkgLines strings.Builder
-	pkgLines.WriteString("Selected packages:\n")
-	for i, pkg := range m.selectedPackages {
-		fmt.Fprintf(&pkgLines, "  - %s: %s\n", pkg.Name, m.versionTypes[i])
-	}
-	sb.WriteString(dimStyle.Render(pkgLines.String()))
+	// Show a compact summary of selected packages grouped by version type
+	sb.WriteString(dimStyle.Render(m.summarizeSelections()))
 	sb.WriteString("\n")
 
 	sb.WriteString(m.textInput.View())
 	sb.WriteString("\n\n")
 	sb.WriteString(helpStyle.Render("enter confirm | ctrl+c quit"))
 
+	return sb.String()
+}
+
+// summarizeSelections returns a compact summary of selected packages.
+// If all packages share the same version type, shows "N packages: type".
+// Otherwise groups by version type and lists individual packages for small groups.
+func (m Model) summarizeSelections() string {
+	// Group packages by version type
+	groups := make(map[changeset.VersionType][]string)
+	order := []changeset.VersionType{changeset.Major, changeset.Minor, changeset.Patch}
+	for i, pkg := range m.selectedPackages {
+		vt := m.versionTypes[i]
+		groups[vt] = append(groups[vt], pkg.Name)
+	}
+
+	// If all packages have the same version type, show a one-liner
+	if len(groups) == 1 {
+		for vt, pkgs := range groups {
+			return fmt.Sprintf("%d packages: %s\n", len(pkgs), vt)
+		}
+	}
+
+	// Multiple version types: show count per type, list names only for small groups
+	const maxListSize = 5
+	var sb strings.Builder
+	for _, vt := range order {
+		pkgs := groups[vt]
+		if len(pkgs) == 0 {
+			continue
+		}
+		if len(pkgs) <= maxListSize {
+			fmt.Fprintf(&sb, "%s:\n", vt)
+			for _, name := range pkgs {
+				fmt.Fprintf(&sb, "  - %s\n", name)
+			}
+		} else {
+			fmt.Fprintf(&sb, "%s: %d packages\n", vt, len(pkgs))
+		}
+	}
 	return sb.String()
 }
 
@@ -564,12 +871,14 @@ func (m Model) Result() *changeset.Changeset {
 
 // Run starts the TUI and returns the resulting changeset.
 func Run(packages []discovery.Package) (*changeset.Changeset, error) {
-	return RunWithChanged(packages, nil)
+	return RunWithChanged(packages, nil, nil)
 }
 
 // RunWithChanged starts the TUI with packages grouped by changed status.
 // Changed packages are shown first but not pre-selected.
-func RunWithChanged(packages []discovery.Package, changedPkgs map[string]bool) (*changeset.Changeset, error) {
+// If fixedVersionType is non-nil, the version selection step is skipped
+// and all selected packages are assigned that version type.
+func RunWithChanged(packages []discovery.Package, changedPkgs map[string]bool, fixedVersionType *changeset.VersionType) (*changeset.Changeset, error) {
 	if len(packages) == 0 {
 		return nil, errors.New("no packages found")
 	}
@@ -578,6 +887,7 @@ func RunWithChanged(packages []discovery.Package, changedPkgs map[string]bool) (
 		changedPkgs = make(map[string]bool)
 	}
 	model := NewModelWithChanged(packages, changedPkgs)
+	model.fixedVersionType = fixedVersionType
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
@@ -597,5 +907,5 @@ func RunWithChanged(packages []discovery.Package, changedPkgs map[string]bool) (
 // RunWithPreselected is deprecated, use RunWithChanged instead.
 // This is kept for backwards compatibility.
 func RunWithPreselected(packages []discovery.Package, preselected map[string]bool) (*changeset.Changeset, error) {
-	return RunWithChanged(packages, preselected)
+	return RunWithChanged(packages, preselected, nil)
 }
