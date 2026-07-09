@@ -1,5 +1,11 @@
 # gocs
 
+## 0.2.1
+
+### Patch Changes
+
+- [#13](https://github.com/smartcontractkit/gocs/pull/13) [`485e58f`](https://github.com/smartcontractkit/gocs/commit/485e58f484ab7c4a9ccaad2028c88e4937d8d65b) Thanks [@chainchad](https://github.com/chainchad)! - Bump deps
+
 ## 0.2.0
 
 ### Minor Changes
