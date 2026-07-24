@@ -281,7 +281,10 @@ func (m Model) updatePackageSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.versionTypes[i] = *m.fixedVersionType
 				}
 				m.state = StateEnterSummary
-				return m, m.textArea.Focus()
+				// Focus() has a pointer receiver, so call it before
+				// returning m to include the focused textarea state.
+				cmd := m.textArea.Focus()
+				return m, cmd
 			}
 
 			// Start pnpm-style version selection: major first
@@ -427,13 +430,15 @@ func (m Model) updateVersionSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Only header row left, assign remaining as patch
 					m.assignRemainingAsPatch()
 					m.state = StateEnterSummary
-					return m, m.textArea.Focus()
+					cmd := m.textArea.Focus()
+					return m, cmd
 				}
 			} else {
 				// After minor step, assign remaining packages as patch
 				m.assignRemainingAsPatch()
 				m.state = StateEnterSummary
-				return m, m.textArea.Focus()
+				cmd := m.textArea.Focus()
+				return m, cmd
 			}
 		}
 	}
@@ -504,10 +509,14 @@ func (m Model) updateSummaryInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "ctrl+d":
-			m.summary = strings.TrimSpace(m.textArea.Value())
-			if m.summary == "" {
+			value := m.textArea.Value()
+			if strings.TrimSpace(value) == "" {
 				return m, nil
 			}
+			// Trim only surrounding blank lines so intentional markdown
+			// indentation (nested lists, code blocks) is preserved;
+			// buildContent appends the trailing newline.
+			m.summary = strings.Trim(value, "\n")
 
 			// Build the changeset
 			entries := make([]changeset.Entry, len(m.selectedPackages))
