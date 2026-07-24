@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -97,8 +97,8 @@ type Model struct {
 	fixedVersionType *changeset.VersionType
 
 	// Summary input
-	textInput textinput.Model
-	summary   string
+	textArea textarea.Model
+	summary  string
 
 	// Result
 	result *changeset.Changeset
@@ -110,19 +110,33 @@ type versionDisplayRow struct {
 	pkgIndex int  // index into selectedPackages (-1 for header)
 }
 
+// summaryInputHeight returns the changelog textarea height for a given
+// terminal height. It scales with the window while reserving room for the
+// title, selection summary, and help line, and is clamped to a sane range.
+func summaryInputHeight(windowHeight int) int {
+	const (
+		reserved  = 10 // title, selection summary, gaps, and help line
+		minHeight = 5
+		maxHeight = 20
+	)
+	return max(minHeight, min(maxHeight, windowHeight-reserved))
+}
+
 // NewModel creates a new TUI model with the given packages.
 func NewModel(packages []discovery.Package) Model {
-	ti := textinput.New()
-	ti.Placeholder = "Enter changelog message..."
-	ti.CharLimit = 500
-	ti.Width = 60
+	ta := textarea.New()
+	ta.Placeholder = "Enter changelog message..."
+	ta.CharLimit = 0 // no limit, matching the changesets CLI
+	ta.ShowLineNumbers = false
+	ta.SetWidth(60)
+	ta.SetHeight(summaryInputHeight(24))
 
 	return Model{
 		state:        StateSelectPackages,
 		packages:     packages,
 		displayItems: make([]packageItem, 0, len(packages)),
 		selected:     make(map[int]bool),
-		textInput:    ti,
+		textArea:     ta,
 		windowHeight: 24, // default, will be updated
 	}
 }
@@ -164,7 +178,7 @@ func buildDisplayRows(items []packageItem, changedCount, unchangedCount int) []d
 
 	if changedCount > 0 {
 		rows = append(rows, displayRow{isHeader: true, headerIdx: 0})
-		for i := 0; i < changedCount; i++ {
+		for i := range changedCount {
 			rows = append(rows, displayRow{item: items[i]})
 		}
 	}
@@ -189,6 +203,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle window resize for all states
 	if msg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.windowHeight = msg.Height
+		// Leave a small margin so the input border doesn't touch the edge.
+		if w := msg.Width - 4; w > 0 {
+			m.textArea.SetWidth(w)
+		}
+		m.textArea.SetHeight(summaryInputHeight(msg.Height))
 	}
 
 	switch m.state {
@@ -262,8 +281,10 @@ func (m Model) updatePackageSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.versionTypes[i] = *m.fixedVersionType
 				}
 				m.state = StateEnterSummary
-				m.textInput.Focus()
-				return m, textinput.Blink
+				// Focus() has a pointer receiver, so call it before
+				// returning m to include the focused textarea state.
+				cmd := m.textArea.Focus()
+				return m, cmd
 			}
 
 			// Start pnpm-style version selection: major first
@@ -409,15 +430,15 @@ func (m Model) updateVersionSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Only header row left, assign remaining as patch
 					m.assignRemainingAsPatch()
 					m.state = StateEnterSummary
-					m.textInput.Focus()
-					return m, textinput.Blink
+					cmd := m.textArea.Focus()
+					return m, cmd
 				}
 			} else {
 				// After minor step, assign remaining packages as patch
 				m.assignRemainingAsPatch()
 				m.state = StateEnterSummary
-				m.textInput.Focus()
-				return m, textinput.Blink
+				cmd := m.textArea.Focus()
+				return m, cmd
 			}
 		}
 	}
@@ -487,11 +508,15 @@ func (m Model) updateSummaryInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 
-		case "enter":
-			m.summary = m.textInput.Value()
-			if m.summary == "" {
+		case "ctrl+d":
+			value := m.textArea.Value()
+			if strings.TrimSpace(value) == "" {
 				return m, nil
 			}
+			// Trim only surrounding blank lines so intentional markdown
+			// indentation (nested lists, code blocks) is preserved;
+			// buildContent appends the trailing newline.
+			m.summary = strings.Trim(value, "\n")
 
 			// Build the changeset
 			entries := make([]changeset.Entry, len(m.selectedPackages))
@@ -512,7 +537,7 @@ func (m Model) updateSummaryInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	m.textInput, cmd = m.textInput.Update(msg)
+	m.textArea, cmd = m.textArea.Update(msg)
 	return m, cmd
 }
 
@@ -654,7 +679,8 @@ func (m Model) renderPackageRow(cursorIdx int, row displayRow) string {
 		path = dimStyle.Render(fmt.Sprintf(" (%s)", item.pkg.Path))
 	}
 
-	return fmt.Sprintf("%s%s %s%s", cursor, checked, name, path)
+	// Indent package rows so they nest visually under their section header.
+	return fmt.Sprintf("  %s%s %s%s", cursor, checked, name, path)
 }
 
 // renderPackageItemSimple renders a package item for simple (non-grouped) display
@@ -818,9 +844,9 @@ func (m Model) viewSummaryInput() string {
 	sb.WriteString(dimStyle.Render(m.summarizeSelections()))
 	sb.WriteString("\n")
 
-	sb.WriteString(m.textInput.View())
+	sb.WriteString(m.textArea.View())
 	sb.WriteString("\n\n")
-	sb.WriteString(helpStyle.Render("enter confirm | ctrl+c quit"))
+	sb.WriteString(helpStyle.Render("ctrl+d confirm | enter newline | ctrl+c quit"))
 
 	return sb.String()
 }

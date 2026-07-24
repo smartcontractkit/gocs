@@ -552,3 +552,53 @@ func TestFixedVersionTypeSkipsVersionSelection(t *testing.T) {
 		}
 	}
 }
+
+func TestSummaryInputMultiLineConfirm(t *testing.T) {
+	packages := []discovery.Package{{Name: "pkg-a", Path: "packages/a"}}
+
+	m := NewModelWithChanged(packages, map[string]bool{"pkg-a": true})
+	vt := changeset.Patch
+	m.fixedVersionType = &vt
+
+	// Select the changed package and confirm to reach the summary step.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	if m.state != StateEnterSummary {
+		t.Fatalf("expected state StateEnterSummary, got %d", m.state)
+	}
+
+	// Type a first line, then Enter to insert a newline (multi-line input),
+	// then a second line.
+	for _, r := range "line one" {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	for _, r := range "line two" {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+
+	// Enter should NOT confirm; still in the summary step.
+	if m.state != StateEnterSummary {
+		t.Fatalf("enter should insert a newline, not confirm; state=%d", m.state)
+	}
+
+	// Ctrl+D confirms.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(Model)
+
+	if m.state != StateDone {
+		t.Fatalf("expected state StateDone after ctrl+d, got %d", m.state)
+	}
+	if m.result == nil {
+		t.Fatal("expected a changeset result")
+	}
+	if want := "line one\nline two"; m.result.Summary != want {
+		t.Errorf("expected multi-line summary %q, got %q", want, m.result.Summary)
+	}
+}
