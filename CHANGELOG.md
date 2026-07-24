@@ -1,5 +1,11 @@
 # gocs
 
+## 0.2.2
+
+### Patch Changes
+
+- [#15](https://github.com/smartcontractkit/gocs/pull/15) [`d7c070b`](https://github.com/smartcontractkit/gocs/commit/d7c070b1997a2f46d1efc7d9160b66e49f7d819b) Thanks [@chainchad](https://github.com/chainchad)! - Support multiline changelog messages and fix package row indentation under section headers
+
 ## 0.2.1
 
 ### Patch Changes
