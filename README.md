@@ -12,7 +12,7 @@ Clone the repo and run:
 make install
 ```
 
-This builds the `gocs` binary into `$GOBIN`, falling back to `$GOPATH/bin` (typically `~/go/bin`). Make sure that directory is on your `PATH` so you can run `gocs` from anywhere.
+This builds the `gocs` binary into `$GOBIN`, falling back to `$GOPATH/bin` (typically `~/go/bin`) when `GOBIN` is unset or points inside a mise-managed Go install. Make sure that directory is on your `PATH` so you can run `gocs` from anywhere.
 
 To install somewhere else, set `INSTALL_DIR`:
 

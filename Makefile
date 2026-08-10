@@ -22,8 +22,8 @@ install:
 	@# mise-managed toolchains only: earlier `go install` runs left copies in mise's
 	@# version-scoped Go dir, and their shims would win on $$PATH. Skipped without mise.
 	@go_installs="$${MISE_DATA_DIR:-$$HOME/.local/share/mise}/installs/go"; \
-	if command -v mise >/dev/null 2>&1 && ls $$go_installs/*/bin/$(BINARY_NAME) >/dev/null 2>&1; then \
-		rm -f $$go_installs/*/bin/$(BINARY_NAME); \
+	if command -v mise >/dev/null 2>&1 && ls "$$go_installs"/*/bin/$(BINARY_NAME) >/dev/null 2>&1; then \
+		rm -f "$$go_installs"/*/bin/$(BINARY_NAME); \
 		mise reshim || true; \
 		echo "Removed stale $(BINARY_NAME) binaries from mise's Go install dirs"; \
 	fi
