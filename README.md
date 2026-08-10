@@ -6,9 +6,21 @@ A Go tool for generating [changesets](https://github.com/changesets/changesets) 
 
 ## Installation
 
+Clone the repo and run:
+
 ```bash
-go install github.com/smartcontractkit/gocs/cmd/gocs@latest
+make install
 ```
+
+This builds the `gocs` binary into `$GOBIN`, falling back to `$GOPATH/bin` (typically `~/go/bin`). Make sure that directory is on your `PATH` so you can run `gocs` from anywhere.
+
+To install somewhere else, set `INSTALL_DIR`:
+
+```bash
+make install INSTALL_DIR=/usr/local/bin
+```
+
+> **Note:** Prefer this over `go install …@latest`. If [mise](https://mise.jdx.dev/) manages your Go toolchain, `GOBIN` points inside its version-scoped install dir, so `go install` puts the binary somewhere that's only on your `PATH` while mise is active.
 
 Or add as a tool dependency (Go 1.24+):
 

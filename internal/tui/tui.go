@@ -831,7 +831,8 @@ func (m Model) renderVersionPackage(cursorIdx int, row versionDisplayRow) string
 		name = selectedStyle.Render(name)
 	}
 
-	return fmt.Sprintf("%s%s %s", cursor, checked, name)
+	// Indent to nest under the "all packages" header.
+	return fmt.Sprintf("  %s%s %s", cursor, checked, name)
 }
 
 func (m Model) viewSummaryInput() string {
